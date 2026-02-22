@@ -1,21 +1,21 @@
-#!/usr/bin/env python3
-import sys
-import time
+from __future__ import annotations
 
-import cv2
+import asyncio
+import shutil
+import sys
+from collections import deque
+from typing import TYPE_CHECKING
+
 import numpy as np
+from textual import work
+from textual.app import App, ComposeResult
+from textual.reactive import reactive
+from textual.widgets import Footer, Header, Static
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 sys.setrecursionlimit(100000)
-
-
-class Node:
-    def __init__(
-        self, name: tuple[int, int], parent: "Node | None" = None, children: list["Node"] | None = None
-    ) -> None:
-        self.name = name
-        self.parent = parent
-        if children:
-            self.children = children
 
 
 class Maze:
@@ -42,167 +42,204 @@ class Maze:
     def make_maze(self) -> None:
         rng = np.random.default_rng()
         difs = [(-1, 0), (0, 1), (1, 0), (0, -1)]
-        visted = np.zeros(self.size, dtype=bool)
-        visted[self.start] = True
-        visted_count = 1
+        visited = np.zeros(self.size, dtype=bool)
+        visited[self.start] = True
+        visited_count = 1
         visted_total = self.size[0] * self.size[1]
         path = []
         loc = self.start
-        while visted_count != visted_total:
+
+        while visited_count != visted_total:
             new_locs = []
             for dx, dy in difs:
-                new_loc = (loc[0] + dx, loc[1] + dy)
-                try:
-                    if visted[new_loc]:
-                        continue
-                except IndexError:
-                    continue
-                if (new_loc[0] < 0) or (new_loc[1] < 0):
-                    continue
-                new_locs.append(new_loc)
+                nx, ny = loc[0] + dx, loc[1] + dy
+                if 0 <= nx < self.size[0] and 0 <= ny < self.size[1] and not visited[nx, ny]:
+                    new_locs.append((nx, ny))
+
             if new_locs:
                 new_loc = new_locs[rng.integers(len(new_locs))]
                 self.wall_check(loc, new_loc, delete_wall=True)
-                visted[new_loc] = True
-                visted_count += 1
+                visited[new_loc] = True
+                visited_count += 1
                 if len(new_locs) > 1:
                     path.append(loc)
                 loc = new_loc
-            else:
+            elif path:
                 loc = path.pop()
 
-    def get_image(self, squares: list[tuple[int, int]] | None = None) -> np.ndarray:
-        if squares is None:
-            squares = []
-        image = np.zeros((10 + 100 * self.size[1], 10 + 100 * self.size[1]), dtype=np.uint8)
-        self._draw_squares(image, squares)
-        self._draw_corners(image)
-        self._draw_walls(image)
-        return image
 
-    def _draw_squares(self, image: np.ndarray, squares: list[tuple[int, int]]) -> None:
-        for square in squares:
-            image[
-                (10 + square[0] * 100) : (100 + square[0] * 100), (10 + square[1] * 100) : (100 + square[1] * 100)
-            ] = 128
-
-    def _draw_corners(self, image: np.ndarray) -> None:
-        for row_idx in range(self.size[0] + 1):
-            for col_idx in range(self.size[1] + 1):
-                image[(row_idx * 100) : (10 + row_idx * 100), (col_idx * 100) : (10 + col_idx * 100)] = 255
-
-    def _draw_walls(self, image: np.ndarray) -> None:
-        for row_idx, row in enumerate(self.walls[0]):
-            for col_idx, col in enumerate(row):
-                if col:
-                    image[(100 * row_idx) : (10 + 100 * row_idx), (10 + 100 * col_idx) : (100 + 100 * col_idx)] = 255
-        for row_idx, row in enumerate(self.walls[1]):
-            for col_idx, col in enumerate(row):
-                if col:
-                    image[(10 + 100 * row_idx) : (100 + 100 * row_idx), (100 * col_idx) : (10 + 100 * col_idx)] = 255
-
-    def show_image(self, squares: list[tuple[int, int]]) -> None:
-        cv2.imshow("Maze", self.get_image(squares))
-        cv2.waitKey()
+# --- Async Generators for UI Animation ---
 
 
-class DepthFirstSolve:
+def dfs_iter(maze: Maze) -> Iterator:
+    difs = [(-1, 0), (0, 1), (1, 0), (0, -1)]
+    path = [maze.start]
+    visited = {maze.start}
+
+    while path:
+        loc = path[-1]
+        yield list(path), visited
+
+        if loc == maze.end:
+            break
+
+        moved = False
+        for dx, dy in difs:
+            nx, ny = loc[0] + dx, loc[1] + dy
+            if (
+                0 <= nx < maze.size[0]
+                and 0 <= ny < maze.size[1]
+                and (nx, ny) not in visited
+                and not maze.wall_check(loc, (nx, ny))
+            ):
+                visited.add((nx, ny))
+                path.append((nx, ny))
+                moved = True
+                break
+
+        if not moved:
+            path.pop()
+
+
+def bfs_iter(maze: Maze) -> Iterator:
+    difs = [(-1, 0), (0, 1), (1, 0), (0, -1)]
+    queue = deque([[maze.start]])
+    visited = {maze.start}
+
+    while queue:
+        path = queue.popleft()
+        loc = path[-1]
+
+        yield list(path), visited
+
+        if loc == maze.end:
+            break
+
+        for dx, dy in difs:
+            nx, ny = loc[0] + dx, loc[1] + dy
+            if (
+                0 <= nx < maze.size[0]
+                and 0 <= ny < maze.size[1]
+                and (nx, ny) not in visited
+                and not maze.wall_check(loc, (nx, ny))
+            ):
+                visited.add((nx, ny))
+                queue.append([*path, (nx, ny)])
+
+
+# --- Textual UI Elements ---
+
+
+class MazeWidget(Static):
+    current_path = reactive(set())
+    visited_nodes = reactive(set())
+
     def __init__(self, maze: Maze) -> None:
+        super().__init__()
         self.maze = maze
 
-    def solve(self) -> list[tuple[int, int]]:
-        difs = [(-1, 0), (0, 1), (1, 0), (0, -1)]
-        ways: dict[tuple[int, int], list[tuple[int, int]]] = {}
-        solution = [self.maze.start]
-        while True:
-            loc = solution[-1]
-            if loc not in ways:
-                ways[loc] = []
-                for dx, dy in difs:
-                    new_loc = (loc[0] + dx, loc[1] + dy)
-                    try:
-                        if new_loc == solution[-2]:
-                            continue
-                    except IndexError:
-                        pass
-                    if (
-                        (new_loc[0] < 0)
-                        or (new_loc[1] < 0)
-                        or (new_loc[0] >= self.maze.size[0])
-                        or (new_loc[1] >= self.maze.size[1])
-                    ):
-                        continue
-                    if not self.maze.wall_check(loc, new_loc):
-                        if new_loc == self.maze.end:
-                            return [*solution, new_loc]
-                        ways[loc].append(new_loc)
-            if ways[loc]:
-                solution.append(ways[loc].pop())
-            else:
-                solution.pop()
+    def render(self) -> str:
+        lines = []
+        for r in range(self.maze.size[0]):
+            top_line = ""
+            for c in range(self.maze.size[1]):
+                top_line += "+"
+                top_line += "---" if self.maze.walls[0][r, c] else "   "
+            lines.append(top_line + "+")
+
+            cell_line = ""
+            for c in range(self.maze.size[1]):
+                wall = "|" if self.maze.walls[1][r, c] else " "
+                char = "   "
+                if (r, c) in self.current_path:
+                    char = "[bold green] █ [/]"
+                elif (r, c) in self.visited_nodes:
+                    char = "[dim] · [/]"
+                cell_line += wall + char
+            cell_line += "|" if self.maze.walls[1][r, self.maze.size[1]] else " "
+            lines.append(cell_line)
+
+        bottom_line = ""
+        r = self.maze.size[0]
+        for c in range(self.maze.size[1]):
+            bottom_line += "+"
+            bottom_line += "---" if self.maze.walls[0][r, c] else "   "
+        lines.append(bottom_line + "+")
+
+        return "\n".join(lines)
 
 
-class WidthFirstSolve:
-    def __init__(self, maze: Maze) -> None:
-        self.maze = maze
-        self.current_node = Node(maze.start)
+class MazeApp(App):
+    CSS = """
+    Screen {
+        align: center middle;
+    }
+    MazeWidget {
+        width: auto;
+        height: auto;
+        border: thick $primary;
+        background: $surface;
+        padding: 0 1;
+    }
+    """
+    BINDINGS = (
+        ("d", "solve_dfs", "Solve (DFS)"),
+        ("b", "solve_bfs", "Solve (BFS)"),
+        ("r", "reset", "New Maze"),
+        ("q", "quit", "Quit"),
+    )
 
-    def solve(self) -> list[tuple[int, int]]:
-        nodes = [self.current_node]
-        visted = {self.current_node.name}
-        while True:
-            new_nodes = []
-            for node in nodes:
-                loc = node.name
-                for dx, dy in [(-1, 0), (0, 1), (1, 0), (0, -1)]:
-                    new_loc = (loc[0] + dx, loc[1] + dy)
-                    if new_loc in visted:
-                        continue
-                    if (
-                        (new_loc[0] < 0)
-                        or (new_loc[1] < 0)
-                        or (new_loc[0] >= self.maze.size[0])
-                        or (new_loc[1] >= self.maze.size[1])
-                    ):
-                        continue
-                    if self.maze.wall_check(loc, new_loc):
-                        continue
-                    if new_loc == self.maze.end:
-                        visted.add(new_loc)
-                        solution = [new_loc]
-                        curr: Node | None = node
-                        while curr is not None:
-                            solution.append(curr.name)
-                            curr = curr.parent
-                        return list(reversed(solution))
-                    new_nodes.append(Node(new_loc, node))
-                    visted.add(new_loc)
-            nodes = new_nodes
+    def _get_maze_size(self) -> tuple[int, int]:
+        """Calculates maze dimensions based on the current terminal size."""
+        # Get terminal dimensions
+        term_width, term_height = shutil.get_terminal_size()
 
+        # Account for UI overhead (Header, Footer, Borders, Padding)
+        # Width: Each cell is 4 chars wide. We subtract ~10 chars for safety.
+        # Height: Each cell is 2 chars high. We subtract ~8 chars for UI elements.
+        cols = max(5, (term_width - 10) // 4)
+        rows = max(5, (term_height - 8) // 2)
 
-def main() -> None:
-    n = 500
-    times: dict[str, list[float]] = {"Maze Making": [], "Depth First": [], "Width First": []}
-    print(len(times["Maze Making"]) + 1)
-    start_time = time.time()
-    maze = Maze((n, n))
-    times["Maze Making"].append(time.time() - start_time)
-    sols = []
-    start_time = time.time()
-    sols.append(tuple(DepthFirstSolve(maze).solve()))
-    times["Depth First"].append(time.time() - start_time)
-    start_time = time.time()
-    sols.append(tuple(WidthFirstSolve(maze).solve()))
-    times["Width First"].append(time.time() - start_time)
-    if len(set(sols)) != 1:
-        for sol in sols:
-            print(sol)
-        msg = "ALL SOLUTIONS DO NOT MATCH"
-        print(msg)
-        raise RuntimeError(msg)
-    for key, value in times.items():
-        print(f"{key} - {(sum(value) / len(value)):.2f}s")
+        return (rows, cols)
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        # Initialize with dynamic size
+        self.maze = Maze(self._get_maze_size())
+        self.maze_widget = MazeWidget(self.maze)
+        yield self.maze_widget
+        yield Footer()
+
+    @work(exclusive=True)
+    async def solve_maze(self, algo: str) -> None:
+        """Runs the solver without blocking the UI."""
+        iterator = dfs_iter(self.maze) if algo == "dfs" else bfs_iter(self.maze)
+
+        for path, visited in iterator:
+            self.maze_widget.current_path = set(path)
+            self.maze_widget.visited_nodes = set(visited)
+            await asyncio.sleep(0.005)  # Slightly faster for larger mazes
+
+    def action_solve_dfs(self) -> None:
+        self.solve_maze("dfs")
+
+    def action_solve_bfs(self) -> None:
+        self.solve_maze("bfs")
+
+    async def action_reset(self) -> None:
+        for worker in self.workers:
+            worker.cancel()
+
+        # Recalculate size on reset in case user resized before hitting 'R'
+        self.maze = Maze(self._get_maze_size())
+        new_widget = MazeWidget(self.maze)
+
+        await self.maze_widget.remove()
+        self.maze_widget = new_widget
+        # Mount the new widget into the screen
+        await self.mount(self.maze_widget)
 
 
 if __name__ == "__main__":
-    main()
+    app = MazeApp()
+    app.run()

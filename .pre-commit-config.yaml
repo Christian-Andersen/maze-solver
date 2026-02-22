@@ -15,9 +15,9 @@ repos:
       - id: check-merge-conflict
       - id: detect-private-key
       - id: check-executables-have-shebangs
-      - id: fix-byte-order-marker # makes changes
-      # - id: trailing-whitespace # makes changes
-      # - id: end-of-file-fixer # makes changes
+      - id: fix-byte-order-marker
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
   - repo: https://github.com/srstevenson/nb-clean
     rev: 4.0.1
     hooks:
