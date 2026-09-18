@@ -7,9 +7,6 @@ alias r := run
 default:
     @just --list
 
-setup:
-    uv python install 3.14
-
 check:
     uv run -- prek run --all-files
 
@@ -19,5 +16,5 @@ run *args:
 audit:
     uv run -- prek run audit
 
-ci: setup
+ci:
     uv run -- prek run --all-files --stage manual
