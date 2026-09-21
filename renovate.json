@@ -9,6 +9,11 @@
   },
   "packageRules": [
     {
+      "description": "Group all Nix flake input updates into a single pull request",
+      "matchManagers": ["nix"],
+      "groupName": "Nix flake inputs"
+    },
+    {
       "description": "Scope lock file maintenance to the Nix flake only",
       "matchManagers": ["pep621"],
       "matchUpdateTypes": ["lockFileMaintenance"],
