@@ -19,5 +19,20 @@
       "matchUpdateTypes": ["lockFileMaintenance"],
       "enabled": false
     }
+  ],
+  "pyenv": {
+    "enabled": false
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Track the Python version in .python-version, preserving uv's '+gil' variant suffix",
+      "managerFilePatterns": ["(^|/)\\.python-version$"],
+      "matchStrings": ["^(?<currentValue>\\d+\\.\\d+(?:\\.\\d+)?)\\+gil\\s*$"],
+      "autoReplaceStringTemplate": "{{newValue}}+gil",
+      "depNameTemplate": "python",
+      "datasourceTemplate": "python-version",
+      "versioningTemplate": "python"
+    }
   ]
 }
