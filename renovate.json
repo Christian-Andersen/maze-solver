@@ -1,36 +1,41 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
   "nix": {
     "enabled": true
   },
   "ignorePaths": [".direnv/**", ".venv/**", ".ruff_cache/**"],
   "lockFileMaintenance": {
-    "enabled": true,
-    "schedule": ["before 6am on the first day of the month"]
+    "enabled": true
   },
-  "packageRules": [
-    {
-      "description": "Group all Nix flake input updates into a single pull request",
-      "matchManagers": ["nix"],
-      "groupName": "Nix flake inputs"
-    },
-    {
-      "description": "Scope lock file maintenance to the Nix flake only",
-      "matchManagers": ["pep621"],
-      "matchUpdateTypes": ["lockFileMaintenance"],
-      "enabled": false
-    }
-  ],
   "pyenv": {
     "enabled": false
   },
+  "packageRules": [
+    {
+      "description": "Group Nix flake input updates into a single PR",
+      "matchManagers": ["nix"],
+      "matchUpdateTypes": ["digest"],
+      "groupName": "Nix flake inputs",
+      "groupSlug": "nix-flake-inputs"
+    },
+    {
+      "description": "Group non-major CI action updates in .forgejo/workflows; major bumps get their own PR",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["digest", "patch", "minor"],
+      "groupName": "CI workflow actions",
+      "groupSlug": "ci-workflow-actions"
+    }
+  ],
   "customManagers": [
     {
       "customType": "regex",
-      "description": "Track the Python version in .python-version, preserving uv's '+gil' variant suffix",
-      "managerFilePatterns": ["(^|/)\\.python-version$"],
-      "matchStrings": ["^(?<currentValue>\\d+\\.\\d+(?:\\.\\d+)?)\\+gil\\s*$"],
-      "autoReplaceStringTemplate": "{{newValue}}+gil",
+      "description": "Track the Python version in .python-version, preserving any uv flavour suffix such as +gil or +freethreaded",
+      "managerFilePatterns": ["/(^|/)\\.python-version$/"],
+      "matchStrings": [
+        "^(?<currentValue>\\d+\\.\\d+(?:\\.\\d+)?)(?<suffix>\\+[A-Za-z0-9._-]+)?\\s*$"
+      ],
+      "autoReplaceStringTemplate": "{{{newValue}}}{{{suffix}}}",
       "depNameTemplate": "python",
       "datasourceTemplate": "python-version",
       "versioningTemplate": "python"
