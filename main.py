@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import shutil
-import sys
 from collections import deque
 from typing import TYPE_CHECKING
 
@@ -14,8 +13,6 @@ from textual.widgets import Footer, Header, Static
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-
-sys.setrecursionlimit(100000)
 
 
 class Maze:
@@ -45,11 +42,11 @@ class Maze:
         visited = np.zeros(self.size, dtype=bool)
         visited[self.start] = True
         visited_count = 1
-        visted_total = self.size[0] * self.size[1]
+        visited_total = self.size[0] * self.size[1]
         path = []
         loc = self.start
 
-        while visited_count != visted_total:
+        while visited_count != visited_total:
             new_locs = []
             for dx, dy in difs:
                 nx, ny = loc[0] + dx, loc[1] + dy
@@ -71,7 +68,7 @@ class Maze:
 # --- Async Generators for UI Animation ---
 
 
-def dfs_iter(maze: Maze) -> Iterator:
+def dfs_iter(maze: Maze) -> Iterator[tuple[list[tuple[int, int]], set[tuple[int, int]]]]:
     difs = [(-1, 0), (0, 1), (1, 0), (0, -1)]
     path = [maze.start]
     visited = {maze.start}
@@ -101,7 +98,7 @@ def dfs_iter(maze: Maze) -> Iterator:
             path.pop()
 
 
-def bfs_iter(maze: Maze) -> Iterator:
+def bfs_iter(maze: Maze) -> Iterator[tuple[list[tuple[int, int]], set[tuple[int, int]]]]:
     difs = [(-1, 0), (0, 1), (1, 0), (0, -1)]
     queue = deque([[maze.start]])
     visited = {maze.start}
@@ -131,12 +128,17 @@ def bfs_iter(maze: Maze) -> Iterator:
 
 
 class MazeWidget(Static):
-    current_path = reactive(set())
-    visited_nodes = reactive(set())
+    # `always_update` ensures the fresh sets assigned in `__init__` are stored
+    # (a plain `reactive(set())` would share one set object across widgets and
+    # skip the assignment since the empty sets compare equal).
+    current_path = reactive(set(), always_update=True)
+    visited_nodes = reactive(set(), always_update=True)
 
     def __init__(self, maze: Maze) -> None:
         super().__init__()
         self.maze = maze
+        self.current_path = set()
+        self.visited_nodes = set()
 
     def render(self) -> str:
         lines = []
@@ -236,8 +238,8 @@ class MazeApp(App):
 
         await self.maze_widget.remove()
         self.maze_widget = new_widget
-        # Mount the new widget into the screen
-        await self.mount(self.maze_widget)
+        # Mount the new widget into the screen, keeping it above the Footer.
+        await self.mount(self.maze_widget, before=self.query_one(Footer))
 
 
 if __name__ == "__main__":
